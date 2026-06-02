@@ -43,11 +43,11 @@ export default async function handler(req, res) {
     return res.status(200).json(cached);
   }
 
-  // 2. Fetch via Scrape.do
-  const SCRAPE_KEY = process.env.SCRAPE_DO_KEY;
-  if (!SCRAPE_KEY) return res.status(500).json({ error: 'SCRAPE_DO_KEY not configured' });
+  // 2. Fetch via ScraperAPI
+  const SCRAPER_KEY = process.env.SCRAPER_API_KEY;
+  if (!SCRAPER_KEY) return res.status(500).json({ error: 'SCRAPER_API_KEY not configured' });
   const fgUrl    = `${BASE}?${qs}`;
-  const proxyUrl = `https://api.scrape.do?token=${SCRAPE_KEY}&url=${encodeURIComponent(fgUrl)}`;
+  const proxyUrl = `https://api.scraperapi.com/?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(fgUrl)}`;
 
   let r;
   try {
