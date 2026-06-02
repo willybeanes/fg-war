@@ -1,3 +1,4 @@
+// Routes through ScraperAPI to bypass Cloudflare bot protection on FanGraphs.
 const BASE = 'https://www.fangraphs.com/api/leaders/major-league/data';
 
 export default async function handler(req, res) {
