@@ -1,18 +1,33 @@
-// Routes through ScraperAPI to bypass Cloudflare bot protection on FanGraphs.
-const BASE = 'https://www.fangraphs.com/api/leaders/major-league/data';
+import { kvGet, kvSet } from './_kv.js';
+
+const BASE      = 'https://www.fangraphs.com/api/leaders/major-league/data';
+const CACHE_TTL = 12 * 3600; // 12 hours
 
 export default async function handler(req, res) {
   const qs = new URLSearchParams(req.query);
 
-  const SCRAPER_KEY = process.env.SCRAPER_API_KEY;
-  if (!SCRAPER_KEY) return res.status(500).json({ error: 'SCRAPER_API_KEY not configured' });
+  // Normalise cache key
+  const sorted = new URLSearchParams([...qs.entries()].sort());
+  const cacheKey = `fg:${sorted.toString()}`;
 
-  const fgUrl = `${BASE}?${qs}`;
-  const scraperUrl = `https://api.scraperapi.com/?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(fgUrl)}`;
+  // 1. Try cache
+  const cached = await kvGet(cacheKey);
+  if (cached) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Cache', 'HIT');
+    return res.status(200).json(cached);
+  }
+
+  // 2. Fetch via Scrape.do
+  const SCRAPE_KEY = process.env.SCRAPE_DO_KEY;
+  if (!SCRAPE_KEY) return res.status(500).json({ error: 'SCRAPE_DO_KEY not configured' });
+  const fgUrl    = `${BASE}?${qs}`;
+  const proxyUrl = `https://api.scrape.do?token=${SCRAPE_KEY}&url=${encodeURIComponent(fgUrl)}`;
 
   let r;
   try {
-    r = await fetch(scraperUrl);
+    r = await fetch(proxyUrl);
   } catch (err) {
     return res.status(502).json({ error: 'upstream fetch failed', detail: String(err) });
   }
@@ -27,5 +42,8 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: 'upstream returned non-JSON', status: r.status });
   }
 
+  if (r.ok) kvSet(cacheKey, body, CACHE_TTL);
+
+  res.setHeader('X-Cache', 'MISS');
   return res.status(r.ok ? 200 : r.status).json(body);
 }
