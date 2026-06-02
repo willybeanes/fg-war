@@ -1,7 +1,31 @@
-import { kvGet, kvSet } from './_kv.js';
-
 const BASE      = 'https://www.fangraphs.com/api/leaders/major-league/data';
 const CACHE_TTL = 12 * 3600; // 12 hours
+
+// ── Vercel KV helpers (REST API, no npm deps) ────────────────────────────────
+async function kvGet(key) {
+  const url = process.env.KV_REST_API_URL, token = process.env.KV_REST_API_TOKEN;
+  if (!url || !token) return null;
+  try {
+    const r = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const { result } = await r.json();
+    return result != null ? JSON.parse(result) : null;
+  } catch { return null; }
+}
+
+async function kvSet(key, value, ttl) {
+  const url = process.env.KV_REST_API_URL, token = process.env.KV_REST_API_TOKEN;
+  if (!url || !token) return;
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(['SET', key, JSON.stringify(value), 'EX', ttl]),
+    });
+  } catch { /* non-fatal */ }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
   const qs = new URLSearchParams(req.query);
