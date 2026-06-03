@@ -30,7 +30,6 @@ async function kvSet(key, value, ttl) {
 export default async function handler(req, res) {
   const qs = new URLSearchParams(req.query);
 
-  // Normalise cache key
   const sorted = new URLSearchParams([...qs.entries()].sort());
   const cacheKey = `fg:${sorted.toString()}`;
 
@@ -43,21 +42,45 @@ export default async function handler(req, res) {
     return res.status(200).json(cached);
   }
 
-  // 2. Fetch via ScraperAPI
+  const COOKIE      = process.env.FANGRAPHS_COOKIE;
   const SCRAPER_KEY = process.env.SCRAPER_API_KEY;
-  if (!SCRAPER_KEY) return res.status(500).json({ error: 'SCRAPER_API_KEY not configured' });
-  const fgUrl    = `${BASE}?${qs}`;
-  const proxyUrl = `https://api.scraperapi.com/?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(fgUrl)}`;
+  const fgUrl       = `${BASE}?${qs}`;
 
-  let r;
-  try {
-    r = await fetch(proxyUrl);
-  } catch (err) {
-    return res.status(502).json({ error: 'upstream fetch failed', detail: String(err) });
+  async function fetchDirect() {
+    return fetch(fgUrl, {
+      headers: {
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Referer': 'https://www.fangraphs.com/',
+        ...(COOKIE ? { 'Cookie': COOKIE } : {}),
+      },
+    });
+  }
+
+  async function fetchViaScraperAPI() {
+    if (!SCRAPER_KEY) throw new Error('No SCRAPER_API_KEY configured');
+    return fetch(`https://api.scraperapi.com/?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(fgUrl)}`);
   }
 
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Access-Control-Allow-Origin', '*');
+
+  let r;
+  try {
+    if (COOKIE) {
+      r = await fetchDirect();
+      if (r.status === 403 && SCRAPER_KEY) {
+        console.warn('FanGraphs cookie returned 403 — falling back to ScraperAPI');
+        r = await fetchViaScraperAPI();
+      }
+    } else if (SCRAPER_KEY) {
+      r = await fetchViaScraperAPI();
+    } else {
+      return res.status(500).json({ error: 'No FANGRAPHS_COOKIE or SCRAPER_API_KEY configured' });
+    }
+  } catch (err) {
+    return res.status(502).json({ error: 'upstream fetch failed', detail: String(err) });
+  }
 
   let body;
   try {
@@ -67,7 +90,6 @@ export default async function handler(req, res) {
   }
 
   if (r.ok) kvSet(cacheKey, body, CACHE_TTL);
-
   res.setHeader('X-Cache', 'MISS');
   return res.status(r.ok ? 200 : r.status).json(body);
 }
