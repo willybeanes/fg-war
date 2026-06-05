@@ -4,6 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>fWAR Component Breakdown</title>
+<meta name="description" content="Visualize fWAR broken down by its components for any MLB player.">
+<meta property="og:title" content="fWAR Component Breakdown">
+<meta property="og:description" content="Visualize fWAR broken down by its components for any MLB player.">
+<meta property="og:url" content="https://fg-war.vercel.app/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="fWAR Component Breakdown">
+<meta name="twitter:description" content="Visualize fWAR broken down by its components for any MLB player.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚾</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -857,6 +865,13 @@ let lbChart = null;
 let cmpAChart = null;
 let cmpBChart = null;
 
+// Explicitly resize compare charts on window resize — Chart.js ResizeObserver
+// doesn't always fire when CSS grid column widths change.
+window.addEventListener('resize', () => {
+  if (cmpAChart) cmpAChart.resize();
+  if (cmpBChart) cmpBChart.resize();
+});
+
 // ─── Mock data (?mock=1 for local dev without Vercel proxy) ───────────────────
 const MOCK_PLAYERS = (() => {
   const names = [
@@ -1090,6 +1105,7 @@ function createWaterfallChart(canvas, player, options = {}) {
           borderColor: colors,
           borderWidth: 0,
           borderRadius: 3,
+          maxBarThickness: options.compact ? 52 : 72,
         },
       ],
     },
