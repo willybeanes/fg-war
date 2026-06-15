@@ -551,6 +551,30 @@
               <select id="lb-year-select" class="year-select"></select>
             </div>
             <div>
+              <div class="field-label">Split</div>
+              <select id="lb-split-filter" class="year-select">
+                <option value="0">Full Season</option>
+                <optgroup label="Rolling">
+                  <option value="36">Last 7 Days</option>
+                  <option value="33">Last 14 Days</option>
+                  <option value="35">Last 21 Days</option>
+                  <option value="34">Last 30 Days</option>
+                </optgroup>
+                <optgroup label="Half">
+                  <option value="7">1st Half</option>
+                  <option value="8">2nd Half</option>
+                </optgroup>
+                <optgroup label="Monthly">
+                  <option value="1">March/April</option>
+                  <option value="2">May</option>
+                  <option value="3">June</option>
+                  <option value="4">July</option>
+                  <option value="5">August</option>
+                  <option value="6">September/October</option>
+                </optgroup>
+              </select>
+            </div>
+            <div>
               <div class="field-label">Team</div>
               <div class="multi-select-wrap" id="lb-team-wrap">
                 <button type="button" class="multi-select-btn" id="lb-team-btn">
@@ -988,17 +1012,20 @@ async function fetchRookiePitcherIds(year) {
   return ids;
 }
 
-async function fetchPitcherLeaders(year) {
-  if (pitcherLbCache.has(year)) return pitcherLbCache.get(year);
+async function fetchPitcherLeaders(year, splitParams = {}) {
+  const key = splitParams.startdate ? `${year}:${splitParams.startdate}` : year;
+  if (pitcherLbCache.has(key)) return pitcherLbCache.get(key);
   const data = await fetchLeaders({
     pos: 'all', stats: 'pit', lg: 'all', qual: 0, type: 8,
-    season: year, season1: year, month: 0, ind: 0,
+    season: year, season1: year, ind: 0,
     pageitems: 2000000000, pagenum: 1,
     sortdir: 'default', sortstat: 'WAR',
+    month: '0',
+    ...splitParams,
   });
   const raw = Array.isArray(data) ? data : (data.data || []);
   const pitchers = raw.filter(p => p.WAR != null).sort((a, b) => b.WAR - a.WAR);
-  pitcherLbCache.set(year, pitchers);
+  pitcherLbCache.set(key, pitchers);
   return pitchers;
 }
 
@@ -1040,6 +1067,69 @@ async function loadData(year = CURRENT_YEAR) {
 
   const result = { players, pitMap };
   dataCache.set(year, result);
+  return result;
+}
+
+// ─── Leaderboard split helpers ────────────────────────────────────────────────
+// Maps a split selector value → FanGraphs API params for that date window.
+// month=1000 with startdate/enddate is the FG custom range convention.
+function getLbSplitParams(splitValue) {
+  const fmt = d => d.toISOString().slice(0, 10);
+  const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return fmt(d); };
+  const today = fmt(new Date());
+  switch (String(splitValue)) {
+    case '36': return { month: '1000', startdate: daysAgo(7),  enddate: today };
+    case '33': return { month: '1000', startdate: daysAgo(14), enddate: today };
+    case '35': return { month: '1000', startdate: daysAgo(21), enddate: today };
+    case '34': return { month: '1000', startdate: daysAgo(30), enddate: today };
+    case '7':  return { month: '7' };
+    case '8':  return { month: '8' };
+    case '1':  return { month: '1' };
+    case '2':  return { month: '2' };
+    case '3':  return { month: '3' };
+    case '4':  return { month: '4' };
+    case '5':  return { month: '5' };
+    case '6':  return { month: '6' };
+    default:   return { month: '0' };
+  }
+}
+
+// Separate cache for leaderboard split data (keyed by `${year}:${startdate|full}`).
+// Full-season requests fall through to the main dataCache.
+const lbDataCache = new Map();
+
+async function loadLbData(year, splitParams = {}) {
+  // Full season (month=0): reuse the shared dataCache (no duplicate fetch)
+  if (!splitParams.startdate && (!splitParams.month || splitParams.month === '0')) return loadData(year);
+
+  const key = splitParams.startdate ? `${year}:${splitParams.startdate}` : `${year}:month${splitParams.month}`;
+  if (lbDataCache.has(key)) return lbDataCache.get(key);
+
+  const base = {
+    lg: 'all', qual: 0, type: 8,
+    season: year, season1: year,
+    ind: 0, pageitems: 2000000000, pagenum: 1,
+    sortdir: 'default', sortstat: 'WAR',
+    ...splitParams,
+  };
+
+  const [leadersData, pitchersData] = await Promise.all([
+    fetchLeaders({ ...base, pos: 'np', stats: 'bat' }),
+    fetchLeaders({ ...base, pos: 'all', stats: 'pit' }),
+  ]);
+
+  const raw = Array.isArray(leadersData) ? leadersData : (leadersData.data || []);
+  const players = raw.filter(p => p.WAR != null).sort((a, b) => b.WAR - a.WAR);
+
+  const batterIds = new Set(players.map(p => p.playerid));
+  const pitchers  = Array.isArray(pitchersData) ? pitchersData : (pitchersData.data || []);
+  const pitMap = new Map();
+  pitchers.forEach(p => {
+    if (p.WAR != null && batterIds.has(p.playerid)) pitMap.set(p.playerid, p.WAR);
+  });
+
+  const result = { players, pitMap };
+  lbDataCache.set(key, result);
   return result;
 }
 
@@ -1337,8 +1427,14 @@ function resolveTeamLabel(teams, year) {
   return [...teams].join('/');
 }
 
+const LB_SPLIT_LABEL = {
+  '36': 'Last 7 Days', '33': 'Last 14 Days', '35': 'Last 21 Days', '34': 'Last 30 Days',
+  '7': '1st Half', '8': '2nd Half',
+  '1': 'March/April', '2': 'May', '3': 'June', '4': 'July', '5': 'August', '6': 'September/October',
+};
+
 // Build the leaderboard title suffix from active filters.
-function lbTitleSuffix(teams, pos, year, rookie = false) {
+function lbTitleSuffix(teams, pos, year, rookie = false, split = '0') {
   const teamName  = resolveTeamLabel(teams, year);
   const rookiePfx = rookie ? 'Rookie ' : '';
   // 'P' → "Pitchers", 'NP' → "Position Players", specific pos → from POS_FULL, '' → "Players"
@@ -1346,10 +1442,11 @@ function lbTitleSuffix(teams, pos, year, rookie = false) {
   if (pos === 'P')       posName = 'Pitchers';
   else if (pos === 'NP') posName = 'Position Players';
   else if (pos)          posName = POS_FULL[pos] || pos + 's';
-  if (teamName && posName) return ` ${teamName} ${rookiePfx}${posName}`;
-  if (teamName)            return ` ${teamName} ${rookiePfx}${pos === '' ? 'Players' : 'Position Players'}`;
-  if (posName)             return ` ${rookiePfx}${posName}`;
-  return ` ${rookiePfx}Players`;
+  const splitSufx = LB_SPLIT_LABEL[split] ? ` — ${LB_SPLIT_LABEL[split]}` : '';
+  if (teamName && posName) return ` ${teamName} ${rookiePfx}${posName}${splitSufx}`;
+  if (teamName)            return ` ${teamName} ${rookiePfx}${pos === '' ? 'Players' : 'Position Players'}${splitSufx}`;
+  if (posName)             return ` ${rookiePfx}${posName}${splitSufx}`;
+  return ` ${rookiePfx}Players${splitSufx}`;
 }
 
 // ─── Leaderboard chart (vertical stacked, highest WAR on left) ────────────────
@@ -1380,7 +1477,7 @@ function renderLeaderboard(players, count = lbCount, year = CURRENT_YEAR, pitMap
   if (mobileTitleEl) {
     const isMobileTitle = window.innerWidth <= 720;
     mobileTitleEl.style.display = isMobileTitle ? 'block' : 'none';
-    mobileTitleEl.textContent = `${year} fWAR Leaderboard — Top ${topN.length}${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie)}`;
+    mobileTitleEl.textContent = `${year} fWAR Leaderboard — Top ${topN.length}${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie, filters.split)}`;
   }
 
   const datasets = [
@@ -1433,7 +1530,7 @@ function renderLeaderboard(players, count = lbCount, year = CURRENT_YEAR, pitMap
         },
         title: {
           display: !isMobile,
-          text: `${year} fWAR Leaderboard — Top ${topN.length}${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie)}`,
+          text: `${year} fWAR Leaderboard — Top ${topN.length}${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie, filters.split)}`,
           color: CHART_DEFAULTS.titleColor,
           font: { size: 14, weight: '600', family: 'DM Sans' },
           padding: { bottom: 16 },
@@ -1568,7 +1665,7 @@ function renderPitcherLeaderboard(players, count = lbCount, year = CURRENT_YEAR,
   if (mobileTitleEl) {
     const isMobileTitle = window.innerWidth <= 720;
     mobileTitleEl.style.display = isMobileTitle ? 'block' : 'none';
-    mobileTitleEl.textContent = `${year} fWAR Leaderboard — Top ${topN.length}${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie)}`;
+    mobileTitleEl.textContent = `${year} fWAR Leaderboard — Top ${topN.length}${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie, filters.split)}`;
   }
 
   const canvas = document.getElementById('lb-chart');
@@ -1609,7 +1706,7 @@ function renderPitcherLeaderboard(players, count = lbCount, year = CURRENT_YEAR,
         },
         title: {
           display: !isMobile,
-          text: `${year} fWAR Leaderboard — Top ${topN.length}${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie)}`,
+          text: `${year} fWAR Leaderboard — Top ${topN.length}${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie, filters.split)}`,
           color: CHART_DEFAULTS.titleColor,
           font: { size: 14, weight: '600', family: 'DM Sans' },
           padding: { bottom: 16 },
@@ -1975,7 +2072,7 @@ function renderComponentLeaderboards(players, year, filters = {}) {
           legend: { display: false },
           title: {
             display: true,
-            text: `${year} ${label} Leaders${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie)}`,
+            text: `${year} ${label} Leaders${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie, filters.split)}`,
             color: CHART_DEFAULTS.titleColor,
             font: { size: 13, weight: '600', family: 'DM Sans' },
             padding: { bottom: 12 },
@@ -2287,15 +2384,17 @@ async function init() {
   let lbRendered = false;
 
   async function redrawLeaderboard() {
-    const year = +document.getElementById('lb-year-select').value;
-    const pos  = document.getElementById('lb-pos-filter').value;
+    const year         = +document.getElementById('lb-year-select').value;
+    const pos          = document.getElementById('lb-pos-filter').value;
+    const split        = document.getElementById('lb-split-filter').value;
     const rookieChecked = document.getElementById('lb-rookie-filter')?.checked;
-    const lbFilters = { teams: lbSelectedTeams, pos, rookie: !!rookieChecked };
+    const splitParams  = getLbSplitParams(split);
+    const lbFilters    = { teams: lbSelectedTeams, pos, rookie: !!rookieChecked, split };
 
     // ── Pitcher-only leaderboard ────────────────────────────────────────────
     if (pos === 'P') {
       let pitchers = [];
-      try { pitchers = await fetchPitcherLeaders(year); } catch { /* fall through */ }
+      try { pitchers = await fetchPitcherLeaders(year, splitParams); } catch { /* fall through */ }
       if (rookieChecked) {
         try {
           const rookieIds = await fetchRookiePitcherIds(year);
@@ -2320,7 +2419,7 @@ async function init() {
       let mergedPlayers = lbTabPlayers;
       let mergedPitMap = lbTabPitMap;
       try {
-        const pitchers = await fetchPitcherLeaders(year);
+        const pitchers = await fetchPitcherLeaders(year, splitParams);
         const batterIds = new Set(lbTabPlayers.map(p => p.playerid));
         const extPitMap = new Map(lbTabPitMap);
 
@@ -2335,7 +2434,6 @@ async function init() {
         const purePitchers = [];
         pitchers.forEach(p => {
           if (!batterIds.has(p.playerid)) {
-            // Pure pitcher: set batting WAR to 0, real WAR goes into pitMap
             purePitchers.push({ ...p, WAR: 0 });
             extPitMap.set(p.playerid, p.WAR ?? 0);
           }
@@ -2388,14 +2486,39 @@ async function init() {
     });
   });
 
+  // Shared helper: fetch leaderboard data for the current year+split, update lbTabPlayers/pitMap
+  async function reloadLbData(year) {
+    const split = document.getElementById('lb-split-filter').value;
+    const splitParams = getLbSplitParams(split);
+    const data = await loadLbData(year, splitParams);
+    lbTabPlayers = data.players;
+    lbTabPitMap = data.pitMap;
+  }
+
   document.getElementById('lb-year-select').addEventListener('change', async function () {
-    pushState({ lby: +this.value !== CURRENT_YEAR ? this.value : null });
+    const year = +this.value;
+    pushState({ lby: year !== CURRENT_YEAR ? year : null });
+    this.disabled = true;
+    // Rolling date splits don't make sense for past seasons — reset them to Full Season
+    const ROLLING_SPLITS = new Set(['36', '33', '35', '34']);
+    if (year !== CURRENT_YEAR && ROLLING_SPLITS.has(document.getElementById('lb-split-filter').value)) {
+      document.getElementById('lb-split-filter').value = '0';
+      pushState({ lbs: null });
+    }
+    try {
+      await reloadLbData(year);
+      populateLbFilters(lbTabPlayers, year);
+      redrawLeaderboard();
+    } finally { this.disabled = false; }
+  });
+
+  document.getElementById('lb-split-filter').addEventListener('change', async function () {
+    pushState({ lbs: this.value !== '0' ? this.value : null });
+    const year = +document.getElementById('lb-year-select').value;
     this.disabled = true;
     try {
-      const data = await loadData(+this.value);
-      lbTabPlayers = data.players;
-      lbTabPitMap = data.pitMap;
-      populateLbFilters(lbTabPlayers, +this.value);
+      await reloadLbData(year);
+      populateLbFilters(lbTabPlayers, year);
       redrawLeaderboard();
     } finally { this.disabled = false; }
   });
@@ -2414,7 +2537,7 @@ async function init() {
     const { players, year, filters, pitMap, isPitcher } = lbExportData;
     if (!players.length) return;
     const rw = getRwForYear(year);
-    const title = `${year} fWAR Leaderboard${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie)}`;
+    const title = `${year} fWAR Leaderboard${lbTitleSuffix(filters.teams, filters.pos, year, filters.rookie, filters.split)}`;
 
     let headers, rows;
     if (isPitcher) {
@@ -2541,6 +2664,7 @@ async function init() {
   const savedLbP  = usp.get('lbp') || '';
   const savedLbN  = usp.get('lbn') ? +usp.get('lbn') : 25;
   const savedLbR  = usp.get('lbr') === '1';
+  const savedLbS  = usp.get('lbs') || '0';
   const savedCaId = usp.get('ca')  ? +usp.get('ca')  : null;
   const savedCaY  = usp.get('cay') ? +usp.get('cay') : CURRENT_YEAR;
   const savedCbId = usp.get('cb')  ? +usp.get('cb')  : null;
@@ -2563,10 +2687,14 @@ async function init() {
     document.querySelectorAll('#lb-count-pills .count-pill')
       .forEach(b => b.classList.toggle('active', +b.dataset.n === lbCount));
   }
-  // Leaderboard: year
-  if (savedLbY !== CURRENT_YEAR) {
-    document.getElementById('lb-year-select').value = savedLbY;
-    const data = await loadData(savedLbY).catch(() => null);
+  // Leaderboard: split (set before year so reloadLbData reads the right value)
+  if (savedLbS !== '0' && savedLbY === CURRENT_YEAR) {
+    document.getElementById('lb-split-filter').value = savedLbS;
+  }
+  // Leaderboard: year + split data
+  if (savedLbY !== CURRENT_YEAR || savedLbS !== '0') {
+    if (savedLbY !== CURRENT_YEAR) document.getElementById('lb-year-select').value = savedLbY;
+    const data = await loadLbData(savedLbY, getLbSplitParams(savedLbS)).catch(() => null);
     if (data) { lbTabPlayers = data.players; lbTabPitMap = data.pitMap; }
   }
   // Leaderboard: teams (multi-select) + pos filter
