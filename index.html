@@ -1095,8 +1095,8 @@ function getLbSplitParams(splitValue) {
     case '33': return { month: '1000', startdate: daysAgo(14), enddate: todayStr };
     case '35': return { month: '1000', startdate: daysAgo(21), enddate: todayStr };
     case '34': return { month: '1000', startdate: daysAgo(30), enddate: todayStr };
-    case '7':  return { month: '7' };
-    case '8':  return { month: '8' };
+    case '7':  return { month: '30' };  // 1st Half
+    case '8':  return { month: '31' };  // 2nd Half
     case '1':  return monthRange(3, 20, 4, 30);   // March/April
     case '2':  return monthRange(5,  1, 5, 31);   // May
     case '3':  return monthRange(6,  1, 6, 30);   // June
