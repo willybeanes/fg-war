@@ -1077,21 +1077,32 @@ async function loadData(year = CURRENT_YEAR) {
 // month=1000 with startdate/enddate is the FG custom range convention.
 function getLbSplitParams(splitValue) {
   const fmt = d => d.toISOString().slice(0, 10);
+  const today = new Date();
+  const todayStr = fmt(today);
   const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return fmt(d); };
-  const today = fmt(new Date());
+  // Cap enddate at today so future dates don't confuse FanGraphs
+  const cap = d => fmt(new Date(Math.min(new Date(d), today)));
+  // Build a month=1000 date-range param for a fixed calendar window.
+  // Using explicit startdate/enddate is more reliable than month=N.
+  const monthRange = (mm, dd1, mm2, dd2) => {
+    const y = today.getFullYear();
+    const start = `${y}-${String(mm).padStart(2,'0')}-${String(dd1).padStart(2,'0')}`;
+    const end   = cap(`${y}-${String(mm2).padStart(2,'0')}-${String(dd2).padStart(2,'0')}`);
+    return { month: '1000', startdate: start, enddate: end };
+  };
   switch (String(splitValue)) {
-    case '36': return { month: '1000', startdate: daysAgo(7),  enddate: today };
-    case '33': return { month: '1000', startdate: daysAgo(14), enddate: today };
-    case '35': return { month: '1000', startdate: daysAgo(21), enddate: today };
-    case '34': return { month: '1000', startdate: daysAgo(30), enddate: today };
+    case '36': return { month: '1000', startdate: daysAgo(7),  enddate: todayStr };
+    case '33': return { month: '1000', startdate: daysAgo(14), enddate: todayStr };
+    case '35': return { month: '1000', startdate: daysAgo(21), enddate: todayStr };
+    case '34': return { month: '1000', startdate: daysAgo(30), enddate: todayStr };
     case '7':  return { month: '7' };
     case '8':  return { month: '8' };
-    case '1':  return { month: '1' };
-    case '2':  return { month: '2' };
-    case '3':  return { month: '3' };
-    case '4':  return { month: '4' };
-    case '5':  return { month: '5' };
-    case '6':  return { month: '6' };
+    case '1':  return monthRange(3, 20, 4, 30);   // March/April
+    case '2':  return monthRange(5,  1, 5, 31);   // May
+    case '3':  return monthRange(6,  1, 6, 30);   // June
+    case '4':  return monthRange(7,  1, 7, 31);   // July
+    case '5':  return monthRange(8,  1, 8, 31);   // August
+    case '6':  return monthRange(9,  1, 10, 6);   // September/October
     default:   return { month: '0' };
   }
 }
