@@ -42,42 +42,24 @@ export default async function handler(req, res) {
     return res.status(200).json(cached);
   }
 
-  const COOKIE      = process.env.FANGRAPHS_COOKIE;
-  const SCRAPER_KEY = process.env.SCRAPER_API_KEY;
-  const fgUrl       = `${BASE}?${qs}`;
+  const COOKIE = process.env.FANGRAPHS_COOKIE;
+  const fgUrl  = `${BASE}?${qs}`;
 
-  async function fetchDirect() {
-    return fetch(fgUrl, {
-      headers: {
-        'Accept': 'application/json, text/plain, */*',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Referer': 'https://www.fangraphs.com/',
-        ...(COOKIE ? { 'Cookie': COOKIE } : {}),
-      },
-    });
-  }
-
-  async function fetchViaScraperAPI() {
-    if (!SCRAPER_KEY) throw new Error('No SCRAPER_API_KEY configured');
-    return fetch(`https://api.scraperapi.com/?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(fgUrl)}`);
-  }
+  if (!COOKIE) return res.status(500).json({ error: 'No FANGRAPHS_COOKIE configured' });
 
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   let r;
   try {
-    if (COOKIE) {
-      r = await fetchDirect();
-      if (r.status === 403 && SCRAPER_KEY) {
-        console.warn('FanGraphs cookie returned 403 — falling back to ScraperAPI');
-        r = await fetchViaScraperAPI();
-      }
-    } else if (SCRAPER_KEY) {
-      r = await fetchViaScraperAPI();
-    } else {
-      return res.status(500).json({ error: 'No FANGRAPHS_COOKIE or SCRAPER_API_KEY configured' });
-    }
+    r = await fetch(fgUrl, {
+      headers: {
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Referer': 'https://www.fangraphs.com/',
+        'Cookie': COOKIE,
+      },
+    });
   } catch (err) {
     return res.status(502).json({ error: 'upstream fetch failed', detail: String(err) });
   }
