@@ -559,6 +559,8 @@
                   <option value="33">Last 14 Days</option>
                   <option value="35">Last 21 Days</option>
                   <option value="34">Last 30 Days</option>
+                  <option value="60">Last 60 Days</option>
+                  <option value="90">Last 90 Days</option>
                 </optgroup>
                 <optgroup label="Half">
                   <option value="7">1st Half</option>
@@ -1095,6 +1097,8 @@ function getLbSplitParams(splitValue) {
     case '33': return { month: '1000', startdate: daysAgo(14), enddate: todayStr };
     case '35': return { month: '1000', startdate: daysAgo(21), enddate: todayStr };
     case '34': return { month: '1000', startdate: daysAgo(30), enddate: todayStr };
+    case '60': return { month: '1000', startdate: daysAgo(60), enddate: todayStr };
+    case '90': return { month: '1000', startdate: daysAgo(90), enddate: todayStr };
     case '7':  return { month: '30' };  // 1st Half
     case '8':  return { month: '31' };  // 2nd Half
     case '1':  return monthRange(3, 20, 4, 30);   // March/April
@@ -1441,7 +1445,7 @@ function resolveTeamLabel(teams, year) {
 }
 
 const LB_SPLIT_LABEL = {
-  '36': 'Last 7 Days', '33': 'Last 14 Days', '35': 'Last 21 Days', '34': 'Last 30 Days',
+  '36': 'Last 7 Days', '33': 'Last 14 Days', '35': 'Last 21 Days', '34': 'Last 30 Days', '60': 'Last 60 Days', '90': 'Last 90 Days',
   '7': '1st Half', '8': '2nd Half',
   '1': 'March/April', '2': 'May', '3': 'June', '4': 'July', '5': 'August', '6': 'September/October',
 };
@@ -1992,11 +1996,17 @@ function populateLbTeams(teams, year = CURRENT_YEAR) {
 }
 
 function populateLbFilters(players, year = CURRENT_YEAR) {
-  // Teams (multi-select)
+  // Teams (multi-select) — also build teamAbbToId map for traded-player matching
   const teams = [...new Set(
     players.map(p => p.TeamName ?? p.team_name_abb ?? '')
            .filter(t => t && !/^\dTM$/.test(t) && !/^[-\s]+$/.test(t))
   )]; // order handled by getLeaguesForYear inside populateLbTeams
+  players.forEach(p => {
+    const abb = p.TeamName ?? p.team_name_abb ?? '';
+    if (abb && !/^\dTM$/.test(abb) && !/^[-\s]+$/.test(abb) && p.playerTeamId != null) {
+      teamAbbToId.set(abb, p.playerTeamId);
+    }
+  });
   populateLbTeams(teams, year);
 
   // Position single-select
@@ -2029,7 +2039,12 @@ function populateLbFilters(players, year = CURRENT_YEAR) {
 function getFilteredLbPlayers(players, posIds = null, rookieIds = null) {
   const pos = document.getElementById('lb-pos-filter').value;
   return players.filter(p => {
-    if (lbSelectedTeams.size > 0 && !lbSelectedTeams.has(p.TeamName ?? p.team_name_abb ?? '')) return false;
+    if (lbSelectedTeams.size > 0) {
+      const teamAbb = p.TeamName ?? p.team_name_abb ?? '';
+      const matchedByName = lbSelectedTeams.has(teamAbb);
+      const matchedById = p.playerTeamId != null && [...lbSelectedTeams].some(t => teamAbbToId.get(t) === p.playerTeamId);
+      if (!matchedByName && !matchedById) return false;
+    }
     // 'NP' and 'P' are handled at the data-source level; skip position filtering here
     if (pos && pos !== 'NP' && pos !== 'P') {
       if (posIds) {
@@ -2299,11 +2314,14 @@ function pushState(updates) {
     else url.searchParams.delete(k);
   });
   history.replaceState(null, '', url);
+  try { window.parent.postMessage({ type: 'bh:urlSync', search: url.search }, '*'); } catch(_) {}
 }
 
 // Multi-select team filter state
 let lbSelectedTeams = new Set();
 let _lbTeamOnChange = () => {}; // wired in init after redrawLeaderboard is defined
+// Maps team abbreviation (e.g. "ARI") → FanGraphs playerTeamId (e.g. 15)
+const teamAbbToId = new Map();
 
 // Pending lb pos filter value to apply on first populateLbFilters call (URL restore)
 let pendingLbPos = '';
