@@ -2042,7 +2042,11 @@ function getFilteredLbPlayers(players, posIds = null, rookieIds = null) {
     if (lbSelectedTeams.size > 0) {
       const teamAbb = p.TeamName ?? p.team_name_abb ?? '';
       const matchedByName = lbSelectedTeams.has(teamAbb);
-      const matchedById = p.playerTeamId != null && [...lbSelectedTeams].some(t => teamAbbToId.get(t) === p.playerTeamId);
+      // matchedById only applies to traded players ("2TM", "3TM"…); using it for
+      // single-team players causes false positives when FanGraphs reuses a team ID
+      // across two franchises (e.g. CLE and MIL both map to ID 23).
+      const isTraded = /^\dTM$/.test(teamAbb);
+      const matchedById = isTraded && p.playerTeamId != null && [...lbSelectedTeams].some(t => teamAbbToId.get(t) === p.playerTeamId);
       if (!matchedByName && !matchedById) return false;
     }
     // 'NP' and 'P' are handled at the data-source level; skip position filtering here
