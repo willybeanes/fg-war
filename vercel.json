@@ -4,5 +4,12 @@
       "memory": 256,
       "maxDuration": 15
     }
-  }
+  },
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "destination": "https://baseball-hopper.vercel.app/war",
+      "permanent": false
+    }
+  ]
 }
