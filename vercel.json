@@ -8,7 +8,7 @@
   "redirects": [
     {
       "source": "/((?!api(?:/|$)).*)",
-      "destination": "https://baseball-hopper.vercel.app/war",
+      "destination": "https://baseballhopper.com/war",
       "permanent": false
     }
   ]
